@@ -13,6 +13,10 @@ from dataclasses import dataclass
 class InfisicalError(RuntimeError):
     """A safe error that never contains credentials or secret values."""
 
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
+
 
 @dataclass(frozen=True)
 class InfisicalConfig:
@@ -20,7 +24,7 @@ class InfisicalConfig:
     client_id: str
     client_secret: str
     project_id: str
-    environment: str = "production"
+    environment: str = "prod"
     secret_path: str = "/"
     shared_path: str | None = None
     allow_http: bool = False
@@ -40,7 +44,7 @@ class InfisicalConfig:
             client_id=required("INFISICAL_CLIENT_ID"),
             client_secret=required("INFISICAL_CLIENT_SECRET"),
             project_id=required("INFISICAL_PROJECT_ID"),
-            environment=os.environ.get("INFISICAL_ENVIRONMENT", "production"),
+            environment=os.environ.get("INFISICAL_ENVIRONMENT", "prod"),
             secret_path=os.environ.get("INFISICAL_SECRET_PATH", "/"),
             shared_path=os.environ.get("INFISICAL_SHARED_PATH") or None,
             allow_http=os.environ.get("INFISICAL_ALLOW_HTTP", "false").lower() in {"1", "true", "yes"},
@@ -71,7 +75,10 @@ class InfisicalClient:
             ) as response:
                 return json.load(response)
         except urllib.error.HTTPError as exc:
-            raise InfisicalError(f"Infisical gaf HTTP {exc.code} voor {path.split('?')[0]}") from None
+            raise InfisicalError(
+                f"Infisical gaf HTTP {exc.code} voor {path.split('?')[0]}",
+                status_code=exc.code,
+            ) from None
         except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise InfisicalError(f"Infisical is niet bereikbaar of gaf een ongeldig antwoord: {type(exc).__name__}") from None
 
@@ -103,10 +110,26 @@ class InfisicalClient:
             "expandSecretReferences": "true",
             "recursive": str(recursive).lower(),
         })
-        payload = self._request(
-            f"/api/v4/secrets?{query}",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            payload = self._request(f"/api/v4/secrets?{query}", headers=headers)
+        except InfisicalError as exc:
+            # Older self-hosted releases expose the same operation on the
+            # deprecated v3 route. Fall back only when v4 itself is absent;
+            # authorization and validation failures must remain visible.
+            if exc.status_code != 404:
+                raise
+            legacy_query = urllib.parse.urlencode({
+                "workspaceId": self.config.project_id,
+                "environment": environment or self.config.environment,
+                "secretPath": secret_path or self.config.secret_path,
+                "viewSecretValue": "true",
+                "expandSecretReferences": "true",
+                "recursive": str(recursive).lower(),
+            })
+            payload = self._request(
+                f"/api/v3/secrets/raw?{legacy_query}", headers=headers,
+            )
         return {
             item["secretKey"]: item["secretValue"]
             for item in payload.get("secrets", [])

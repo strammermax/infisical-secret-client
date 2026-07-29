@@ -93,3 +93,36 @@ def test_shared_folder_is_optional(monkeypatch):
 
     assert result == {"APP_KEY": "value"}
     assert len(requests) == 2  # one login and one app-folder request
+
+
+def test_list_falls_back_to_v3_when_self_hosted_v4_is_absent(monkeypatch):
+    requests = []
+
+    def fake_open(request, **_):
+        requests.append(request)
+        if request.full_url.endswith("/login"):
+            return Response({"accessToken": "short-lived"})
+        if "/api/v4/secrets?" in request.full_url:
+            raise urllib.error.HTTPError(request.full_url, 404, "missing", {}, None)
+        return Response({"secrets": [{"secretKey": "LEGACY", "secretValue": "ok"}]})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_open)
+
+    assert InfisicalClient(config()).list_secrets() == {"LEGACY": "ok"}
+    assert "/api/v3/secrets/raw?" in requests[-1].full_url
+    legacy_query = urllib.parse.parse_qs(urllib.parse.urlparse(requests[-1].full_url).query)
+    assert legacy_query["workspaceId"] == ["project"]
+    assert "projectId" not in legacy_query
+
+
+def test_list_does_not_hide_authorization_errors(monkeypatch):
+    def fake_open(request, **_):
+        if request.full_url.endswith("/login"):
+            return Response({"accessToken": "short-lived"})
+        raise urllib.error.HTTPError(request.full_url, 403, "forbidden", {}, None)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_open)
+
+    with pytest.raises(InfisicalError) as caught:
+        InfisicalClient(config()).list_secrets()
+    assert caught.value.status_code == 403

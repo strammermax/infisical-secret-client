@@ -4,6 +4,10 @@ Generieke, dependency-vrije Python-client voor self-hosted Infisical. De client
 gebruikt Universal Auth, houdt het kortlevende access-token alleen in geheugen en
 logt geen secretwaarden.
 
+De actuele v4 Secrets API wordt gebruikt. Voor oudere self-hosted Infisical-
+installaties valt de client bij een ontbrekend v4-endpoint automatisch terug op
+de legacy v3-route; andere fouten worden niet gemaskeerd.
+
 ## Infisical voorbereiden
 
 1. Maak onder Organization Settings een Machine Identity met Universal Auth.
@@ -28,7 +32,7 @@ INFISICAL_ALLOW_HTTP=true
 INFISICAL_CLIENT_ID=...
 INFISICAL_CLIENT_SECRET=...
 INFISICAL_PROJECT_ID=...
-INFISICAL_ENVIRONMENT=production
+INFISICAL_ENVIRONMENT=prod
 INFISICAL_SECRET_PATH=/Prefect
 # Optioneel:
 INFISICAL_SHARED_PATH=/shared

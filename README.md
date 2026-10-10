@@ -27,7 +27,7 @@ python -m pip install .
 ## Configuratie
 
 ```env
-INFISICAL_ADDR=http://192.168.1.138:8080
+INFISICAL_ADDR=http://infisical.home:8080
 INFISICAL_ALLOW_HTTP=true
 INFISICAL_CLIENT_ID=...
 INFISICAL_CLIENT_SECRET=...

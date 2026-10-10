@@ -40,13 +40,45 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("argv", nargs=argparse.REMAINDER)
     login = sub.add_parser("docker-login", help="login bij een registry met secrets uit Infisical")
     login.add_argument("--registry", default="ghcr.io")
+    put = sub.add_parser("set", help="maak of wijzig één secret; waarde via stdin")
+    put.add_argument("name")
+    delete = sub.add_parser("delete", help="verwijder één secret")
+    delete.add_argument("name")
+    folder = sub.add_parser("folder-ensure", help="maak een map (en bovenliggende) aan")
+    folder.add_argument("folder")
+    ident = sub.add_parser("identity-ensure",
+                           help="app-identiteit met leesrecht op mappen; schrijft bootstrap-env naar stdout (admin)")
+    ident.add_argument("name")
+    ident.add_argument("--read", action="append", required=True, help="map met leesrecht (herhaalbaar)")
+    ident.add_argument("--write", action="append", default=[], help="map met schrijfrecht (herhaalbaar)")
+    parser.add_argument("--admin", action="store_true",
+                        help="gebruik INFISICAL_ADMIN_CLIENT_ID/SECRET (voor set/delete/folder/identity)")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        client = _client()
+        admin = args.admin or args.command == "identity-ensure"
+        client = InfisicalClient(InfisicalConfig.from_env(admin=admin))
+        if args.command == "set":
+            value = sys.stdin.read()
+            if value.endswith("\n"):
+                value = value[:-1]
+            print(client.set_secret(args.name, value, secret_path=args.path, environment=args.environment))
+            return 0
+        if args.command == "delete":
+            client.delete_secret(args.name, secret_path=args.path, environment=args.environment)
+            return 0
+        if args.command == "folder-ensure":
+            client.ensure_folder(args.folder, environment=args.environment)
+            return 0
+        if args.command == "identity-ensure":
+            identity = client.ensure_app_identity(args.name, read_paths=args.read, write_paths=args.write,
+                                                  environment=args.environment)
+            sys.stdout.write(client.bootstrap_env(identity, secret_path=args.read[-1],
+                                                  shared_path=",".join(args.read[:-1]) or None))
+            return 0
         kwargs = {"secret_path": args.path, "environment": args.environment}
         shared_path = args.shared_path if args.shared_path is not None else client.config.shared_path
         if args.command == "list":

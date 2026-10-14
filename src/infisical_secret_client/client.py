@@ -11,7 +11,9 @@ import urllib.request
 from dataclasses import dataclass, replace
 
 # Actions a read-only identity needs to list names and read values.
-READ_ACTIONS = ["read", "describeSecret", "readValue"]
+# "read" is a legacy action; current Infisical rejects it next to
+# describeSecret/readValue (HTTP 400), so only the current actions are used.
+READ_ACTIONS = ["describeSecret", "readValue"]
 WRITE_ACTIONS = ["create", "edit", "delete"]
 
 
@@ -308,19 +310,16 @@ class InfisicalClient:
         slug = f"{name}-{kind}"[:60].lower().replace("_", "-")
         body = {"identityId": identity_id, "projectId": self.config.project_id, "slug": slug,
                 "permissions": rules, "type": {"isTemporary": False}}
-        try:
-            self._api("POST", "/api/v2/identity-project-additional-privilege", body)
-        except InfisicalError as exc:
-            if exc.status_code != 400:
-                raise
-            # Same slug exists: replace its rules.
-            query = urllib.parse.urlencode({"identityId": identity_id, "projectId": self.config.project_id})
-            existing = self._api("GET", f"/api/v2/identity-project-additional-privilege/slug/{slug}?{query}")
-            privilege_id = (existing.get("privilege") or existing).get("id")
-            if not privilege_id:
-                raise
-            self._api("PATCH", f"/api/v2/identity-project-additional-privilege/{privilege_id}",
+        # Look up first: a 400 on create also means "invalid request", so it must
+        # not be read as "already exists".
+        query = urllib.parse.urlencode({"identityId": identity_id, "projectId": self.config.project_id})
+        existing = self._api("GET", f"/api/v2/identity-project-additional-privilege?{query}").get("privileges") or []
+        match = next((p for p in existing if p.get("slug") == slug), None)
+        if match and match.get("id"):
+            self._api("PATCH", f"/api/v2/identity-project-additional-privilege/{match['id']}",
                       {"permissions": rules, "type": {"isTemporary": False}})
+        else:
+            self._api("POST", "/api/v2/identity-project-additional-privilege", body)
 
     def bootstrap_env(self, identity: dict, *, secret_path: str, shared_path: str | None = None) -> str:
         """Bootstrap file content for an app using `identity` (contains its secret)."""

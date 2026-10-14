@@ -3,7 +3,10 @@ import io
 import json
 import urllib.error
 
+import pytest
+
 from infisical_secret_client import InfisicalClient, InfisicalConfig
+from infisical_secret_client.client import InfisicalError
 from infisical_secret_client import cli
 
 
@@ -81,10 +84,11 @@ def test_identity_gets_read_privilege_on_paths(monkeypatch):
     client = InfisicalClient(config())
     identity = client.ensure_app_identity("app-x", read_paths=["/shared", "/apps/x"])
     assert identity == {"identityId": "i1", "clientId": "cid", "clientSecret": "cs", "created": True}
-    privilege = next(c[2] for c in calls if c[1] == "/api/v2/identity-project-additional-privilege")
+    privilege = next(c[2] for c in calls if c[:2] == ("POST", "/api/v2/identity-project-additional-privilege"))
     globs = sorted(r["conditions"]["secretPath"]["$glob"] for r in privilege["permissions"])
     assert globs == ["/apps/x", "/apps/x/**", "/shared", "/shared/**"]
-    assert all(r["action"] == ["read", "describeSecret", "readValue"] for r in privilege["permissions"])
+    # Regression: "read" next to describeSecret/readValue is rejected (HTTP 400) by Infisical.
+    assert all(r["action"] == ["describeSecret", "readValue"] for r in privilege["permissions"])
     env = client.bootstrap_env(identity, secret_path="/apps/x", shared_path="/shared")
     assert "INFISICAL_CLIENT_SECRET=cs\n" in env and "INFISICAL_SECRET_PATH=/apps/x\n" in env
 
@@ -98,3 +102,26 @@ def test_cli_set_reads_value_from_stdin(monkeypatch, capsys):
     assert cli.main(["--path", "/apps/x", "set", "A"]) == 0
     assert calls[-1][2]["secretValue"] == "geheim"
     assert "geheim" not in capsys.readouterr().out
+
+
+def test_existing_privilege_is_patched_not_recreated(monkeypatch):
+    """Regression: a 400 on create was taken as "exists" and led to a 422 slug lookup."""
+    calls = fake(monkeypatch, {
+        ("GET", "/api/v2/identity-project-additional-privilege"): {"privileges": [{"id": "p9", "slug": "app-x-read"}]},
+    })
+    client = InfisicalClient(config())
+    client.grant("i1", "app-x", ["/apps/x"], ["describeSecret", "readValue"], "prod", "read")
+    methods = [(c[0], c[1]) for c in calls if "additional-privilege" in c[1]]
+    assert ("PATCH", "/api/v2/identity-project-additional-privilege/p9") in methods
+    assert ("POST", "/api/v2/identity-project-additional-privilege") not in methods
+
+
+def test_privilege_create_error_is_not_swallowed(monkeypatch):
+    fake(monkeypatch, {
+        ("GET", "/api/v2/identity-project-additional-privilege"): {"privileges": []},
+        ("POST", "/api/v2/identity-project-additional-privilege"): 400,
+    })
+    client = InfisicalClient(config())
+    with pytest.raises(InfisicalError) as exc:
+        client.grant("i1", "app-x", ["/apps/x"], ["describeSecret", "readValue"], "prod", "read")
+    assert exc.value.status_code == 400

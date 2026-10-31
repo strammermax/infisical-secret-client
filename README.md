@@ -43,6 +43,24 @@ Gebruik voor productie bij voorkeur HTTPS met een vertrouwde interne CA. Met
 bewust `INFISICAL_ALLOW_HTTP=true` omdat anders credentials leesbaar over het
 netwerk reizen.
 
+## Gebruik in een app
+
+Laad secrets via de helpers: die loggen één keer per proces in. Een client per
+waarde maken kan Infisical's login-lockout (3 fouten / 30 s) veroorzaken.
+
+```python
+from infisical_secret_client import load_into_environ, secret
+
+# Omgeving eerst, anders Infisical; ontbreekt hij, dan InfisicalError
+token = secret("API_TOKEN")
+optional = secret("SMTP_USER", None)
+
+# Of: alle secrets in os.environ zetten (Infisical overschrijft .env)
+load_into_environ()
+```
+
+Zonder `INFISICAL_CLIENT_ID` gebruiken beide alleen de omgeving.
+
 ## Gebruik
 
 ```bash

@@ -1,0 +1,77 @@
+name: Version
+
+# Every push to main is a release: bump VERSION to a calendar version
+# (YYYY.MM.DD.N, Europe/Amsterdam), commit it and tag v<VERSION>.
+# Same scheme as Myscripts-proxmox. Pushes made with GITHUB_TOKEN do not start
+# other workflows, so the bump commit does not trigger itself or a deploy.
+# Template: D:\Project\windowsscripts\templates\version-bump.yml
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: version-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Bump calendar version
+        id: bump
+        env:
+          TZ: Europe/Amsterdam
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          today="$(date '+%Y.%m.%d')"
+          cur=""
+          [ -f VERSION ] && cur="$(tr -d '[:space:]' < VERSION)"
+          if [ -n "${BEFORE:-}" ] && [ -f VERSION ] && git cat-file -e "$BEFORE" 2>/dev/null \
+             && ! git diff --quiet "$BEFORE" "$AFTER" -- VERSION; then
+            new="$cur"
+            echo "VERSION was changed in this push; tagging it as is."
+          elif [[ "$cur" =~ ^${today//./\\.}\.([0-9]+)$ ]]; then
+            new="${today}.$((10#${BASH_REMATCH[1]} + 1))"
+          else
+            new="${today}.1"
+          fi
+          echo "$new" > VERSION
+
+          # Keep package.json / pyproject.toml in step when they already use a
+          # calendar version. npm needs semver: 2026.11.01.2 -> 2026.11.1+2.
+          IFS=. read -r y m d n <<< "$new"
+          if [ -f package.json ] && grep -qE '"version": *"[0-9]{4}\.' package.json; then
+            sed -i -E "0,/\"version\": *\"[^\"]*\"/s//\"version\": \"$y.$((10#$m)).$((10#$d))+$n\"/" package.json
+          fi
+          if [ -f pyproject.toml ] && grep -qE '^version *= *"[0-9]{4}\.' pyproject.toml; then
+            sed -i -E "0,/^version *= *\"[^\"]*\"/s//version = \"$new\"/" pyproject.toml
+          fi
+          echo "version=$new" >> "$GITHUB_OUTPUT"
+
+      - name: Commit version and create tag
+        env:
+          NEW_VERSION: ${{ steps.bump.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add VERSION
+          [ -f package.json ] && git add package.json
+          [ -f pyproject.toml ] && git add pyproject.toml
+          git diff --cached --quiet || git commit -m "chore: bump version to $NEW_VERSION"
+          git tag -a "v$NEW_VERSION" -m "v$NEW_VERSION"
+          for attempt in 1 2 3; do
+            git push origin HEAD:main --follow-tags && exit 0
+            git pull --rebase origin main
+          done
+          exit 1

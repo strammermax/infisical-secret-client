@@ -316,8 +316,9 @@ class InfisicalClient:
         existing = self._api("GET", f"/api/v2/identity-project-additional-privilege?{query}").get("privileges") or []
         match = next((p for p in existing if p.get("slug") == slug), None)
         if match and match.get("id"):
+            # Infisical valideert de PATCH-body volledig: zonder slug volgt HTTP 422.
             self._api("PATCH", f"/api/v2/identity-project-additional-privilege/{match['id']}",
-                      {"permissions": rules, "type": {"isTemporary": False}})
+                      {"slug": slug, "permissions": rules, "type": {"isTemporary": False}})
         else:
             self._api("POST", "/api/v2/identity-project-additional-privilege", body)
 

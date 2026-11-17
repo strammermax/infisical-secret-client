@@ -114,6 +114,10 @@ def test_existing_privilege_is_patched_not_recreated(monkeypatch):
     methods = [(c[0], c[1]) for c in calls if "additional-privilege" in c[1]]
     assert ("PATCH", "/api/v2/identity-project-additional-privilege/p9") in methods
     assert ("POST", "/api/v2/identity-project-additional-privilege") not in methods
+    # Regression: Infisical rejects a PATCH without slug with HTTP 422.
+    patch = next(c[2] for c in calls if c[:2] == ("PATCH", "/api/v2/identity-project-additional-privilege/p9"))
+    assert patch["slug"] == "app-x-read"
+    assert patch["type"] == {"isTemporary": False}
 
 
 def test_privilege_create_error_is_not_swallowed(monkeypatch):
